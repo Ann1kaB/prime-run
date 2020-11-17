@@ -48,6 +48,7 @@ if [ $(xrandr --listproviders | grep -o "providers:.*" | wc -l) -gt 1 ]; then
   done
   if [ ! "$_b" ]; then
     delim="(" && _gpu
+    [ "$GPU" = "dGPU" ] && GPU="iGPU"
     notify-send "WARNING: Battery not detected, defaulting to GPU: $GPU"
     _default=1
   fi
