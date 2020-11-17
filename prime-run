@@ -4,39 +4,24 @@
 unset DRI_PRIME VK_ICD_FILENAMES __NV_PRIME_RENDER_OFFLOAD \
 	__GLX_VENDOR_LIBRARY_NAME __VK_LAYER_NV_optimus
 
-# Check glxinfo present
-[ ! -e /usr/bin/glxinfo ] && notify-send "WARNING: glxinfo not present, please install it." && _not_glxinfo=1
-
 # Check arguments
 [ -z "$@" ] && notify-send -u critical "ERROR: At least 1 argument required!" && exit 1
 
-MESA_VER=$(glxinfo | grep  "OpenGL core profile version string:" | cut -d' ' -f10 | sed 's/\.//g')
 BAT_STATUS=$(cat /sys/class/power_supply/BAT*/status)
-
-# cut useless info out of GPU in use
-_gpu() {
-  [ ! $_not_glxinfo ] && GPU=$($_env glxinfo | grep "OpenGL renderer string:"\
-	  | cut -d"$delim" -f1 | sed 's/.*: //')
-}
 
 # make sure we have more than 1 active GPU
 # Will the first card always be 0?
 if [ -e /dev/dri/card1 ]; then
+  # Check Xorg running
+  # If not, assume using Wayland
+  ! pgrep -x Xorg > /dev/null && _not_xorg=1
   if [[ $BAT_STATUS =~ (Full|Charging|Unknown) ]]; then
-    # Check Xorg running
-    # If not, assume using Wayland
-    ! pgrep -x Xorg > /dev/null && _not_xorg=1
     if [ ! $_not_xorg ] && [[ $(xrandr --listproviders) =~ "NVIDIA" ]]; then
-      _env="env __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia" && delim="/" && _gpu
-      [ "$GPU" ] && _string="$GPU" || _string="GPU"
-      notify-send "Using GPU: NVIDIA $_string (Hybrid)"
+      notify-send "Using NVIDIA GPU (Hybrid)"
       __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia  __VK_LAYER_NV_optimus=NVIDIA_only "$@"
     elif [ $_not_xorg ] || [[ ! $(xrandr --listproviders) =~ "NVIDIA" ]]; then
-      _env="env DRI_PRIME=1" && delim="(" && _gpu
-      [ "$GPU" ] && _string="GPU: $GPU" || _string="dGPU"
-      notify-send "Using $_string"
-      # assume we have a AMD dGPU and use ACO if mesa ver < 20.2
-      [ $MESA_VER -lt 2020 ] && _RADV="env RADV_PERFTEST=aco" && DRI_PRIME=1 $_RADV "$@"
+      notify-send "Using AMD dGPU"
+      DRI_PRIME=1 $_RADV "$@"
     fi
     exit
   fi
@@ -44,18 +29,14 @@ if [ -e /dev/dri/card1 ]; then
   # iGPU driver only loaded to pass fb to dGPU (NVIDIA)
   # so it's ICD will not load at all if we try to use it
   if [ ! $_not_xorg ] && [[ $(xrandr --listproviders) =~ "NVIDIA-0" ]]; then
-    delim="/" && _gpu
-    [ "$GPU" ] && _string="$GPU" || _string="GPU"
-    notify-send "Using GPU: NVIDIA $_string"
+    notify-send "Using NVIDIA GPU"
     # Seems there's a performance issue with using __NV_PRIME_RENDER_OFFLOAD=1 in NVIDIA mode
     __GLX_VENDOR_LIBRARY_NAME=nvidia  __VK_LAYER_NV_optimus=NVIDIA_only "$@"
     exit
   fi
 
   if [ ! /sys/class/power_supply/BAT* ]; then
-    delim="(" && _gpu
-    [ "$GPU" ] && _string="GPU: $GPU" || _string="iGPU"
-    notify-send "WARNING: Battery not detected, defaulting to $_string"
+    notify-send "WARNING: Battery not detected, defaulting to iGPU"
     _default=1
   fi
 
@@ -67,22 +48,11 @@ if [ -e /dev/dri/card1 ]; then
       fi
     done
     if [ ! $_default ]; then
-      delim="(" && _gpu
-      [ "$GPU" ] && _string="iGPU: $GPU" || _string="iGPU"
-      notify-send "Using $_string"
-    fi
-    # Use ACO if mesa ver < 20.2
-    # TODO: Might be broken for Intel iGPUs here?
-    # If so, fix it
-    if [[ $(lspci | grep "VGA.*AMD") ]] && [ $MESA_VER -lt 2020 ]; then
-      _RADV="RADV_PERFTEST=aco"
+      notify-send "Using iGPU"
     fi
     VK_ICD_FILENAMES="${_VK_ICD// /:}" $_RADV "$@"
     exit
   fi
 else
-  delim="(" && _gpu
-  [ "$GPU" ] && _string="GPU: $GPU" || _string="GPU"
-  notify-send "WARNING: Only 1 (active) $_string detected, continuing anyways."
-  "$@"
+  notify-send "WARNING: Only 1 (active) GPU detected, continuing anyways." && "$@"
 fi
