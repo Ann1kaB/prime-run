@@ -1,0 +1,77 @@
+#!/bin/bash
+
+# Sane environment
+unset DRI_PRIME VK_ICD_FILENAMES __NV_PRIME_RENDER_OFFLOAD \
+	__GLX_VENDOR_LIBRARY_NAME __VK_LAYER_NV_optimus
+
+# Check glxinfo present
+! glxinfo > /dev/null && notify-send "WARNING: glxinfo not present, please install it." && _not_glxinfo=1
+
+# Check Xorg running
+# TODO: add Wayland support
+! pgrep -x Xorg > /dev/null && notify-send -u critical "ERROR: Xorg is not running!" && exit 1
+
+if [ -z "$@" ]; then
+  notify-send -u critical "ERROR: At least 1 argument required!"
+  exit 1
+fi
+
+MESA_VER=$(glxinfo | grep  "OpenGL core profile version string:" | cut -d' ' -f10 | sed 's/\.//g')
+
+# cut useless info out of GPU in use
+_gpu() {
+  [ ! $_not_glxinfo ] && GPU=$($GPU_arg glxinfo | grep "OpenGL renderer string:"\
+	  | cut -d"$delim" -f1 | sed 's/.*: //') \
+  || GPU="dGPU"
+}
+
+if [ $(xrandr --listproviders | grep -o "providers:.*" | wc -l) -gt 1 ]; then
+  for _b in $(cat /sys/class/power_supply/BAT*/status); do
+    if [[ "$_b" =~ (Full|Charging|Unknown) ]]; then
+      if [ ! $(xrandr --listproviders | grep -o "NVIDIA") ]; then
+	GPU_arg="env DRI_PRIME=1" && delim="(" && _gpu
+	notify-send "Using GPU: $GPU"
+        # assume we have a AMD dGPU and use ACO if mesa ver < 20.2
+        [ $MESA_VER -lt 2020 ] && _RADV="env RADV_PERFTEST=aco"
+        DRI_PRIME=1 $_RADV "$@"
+      elif [ ! $(xrandr --listproviders | grep -o "NVIDIA-0") ]; then
+        GPU_arg="env __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia" && delim="/" && _gpu
+	notify-send "Using GPU: NVIDIA $GPU (Hybrid)"
+        __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia  __VK_LAYER_NV_optimus=NVIDIA_only "$@"
+      else
+	delim="/" && _gpu
+	notify-send "Using GPU: NVIDIA $GPU"
+      # Seems there's a performance issue with using __NV_PRIME_RENDER_OFFLOAD=1 in NVIDIA mode
+        __GLX_VENDOR_LIBRARY_NAME=nvidia  __VK_LAYER_NV_optimus=NVIDIA_only "$@"
+      fi
+    fi
+  done
+  if [ ! "$_b" ]; then
+    delim="(" && _gpu
+    notify-send "WARNING: Battery not detected, defaulting to GPU: $GPU"
+    _default=1
+  fi
+
+  # Use iGPU in Vulkan games (DXVK)
+  if [[ ! "$_b" =~ (Full|Charging|Unknown) ]]; then
+    for _f in /usr/share/vulkan/icd.d/*; do
+      if [[ ! "$_f"  =~ "nvidia" ]]; then
+        _VK_ICD+="$_f "
+      fi
+    done
+    if [ ! "$_default" ]; then
+      delim="(" && _gpu
+      [ "$GPU" = "dGPU" ] && GPU="iGPU"
+      notify-send "Using iGPU: $GPU"
+    fi
+    # Use ACO if mesa ver < 20.2
+    if [[ "$(xrandr --listproviders)" =~ "AMD" ]] && [ $MESA_VER -lt 2020 ]; then
+	_RADV="RADV_PERFTEST=aco"
+    fi
+    VK_ICD_FILENAMES="${_VK_ICD// /:}" $_RADV "$@"
+  fi
+else
+  delim="(" && _gpu
+  notify-send "WARNING: Only 1 GPU: $GPU detected, continuing anyways."
+  "$@"
+fi
