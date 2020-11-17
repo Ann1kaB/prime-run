@@ -5,7 +5,8 @@ unset DRI_PRIME VK_ICD_FILENAMES __NV_PRIME_RENDER_OFFLOAD \
 	__GLX_VENDOR_LIBRARY_NAME __VK_LAYER_NV_optimus
 
 # Check arguments
-[ -z "$@" ] && notify-send -u critical "ERROR: At least 1 argument required!" && exit 1
+[ -z "$@" ] && notify-send -u critical "ERROR: At least 1 argument required!" \
+&& exit 1
 
 BAT_STATUS=$(cat /sys/class/power_supply/BAT*/status)
 
@@ -14,14 +15,13 @@ BAT_STATUS=$(cat /sys/class/power_supply/BAT*/status)
 if [ -e /dev/dri/card1 ]; then
   # Check Xorg running
   # If not, assume using Wayland
-  ! pgrep -x Xorg > /dev/null && _not_xorg=1
+  ! pidof {X,Xorg} > /dev/null && _not_xorg=1
   if [[ $BAT_STATUS =~ (Full|Charging|Unknown) ]]; then
     if [ ! $_not_xorg ] && [[ $(xrandr --listproviders) =~ "NVIDIA" ]]; then
-      notify-send "Using NVIDIA GPU (Hybrid)"
-      __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia  __VK_LAYER_NV_optimus=NVIDIA_only "$@"
+      __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia  \
+      __VK_LAYER_NV_optimus=NVIDIA_only "$@"
     elif [ $_not_xorg ] || [[ ! $(xrandr --listproviders) =~ "NVIDIA" ]]; then
-      notify-send "Using AMD dGPU"
-      DRI_PRIME=1 $_RADV "$@"
+      DRI_PRIME=1 "$@"
     fi
     exit
   fi
@@ -29,16 +29,14 @@ if [ -e /dev/dri/card1 ]; then
   # iGPU driver only loaded to pass fb to dGPU (NVIDIA)
   # so it's ICD will not load at all if we try to use it
   if [ ! $_not_xorg ] && [[ $(xrandr --listproviders) =~ "NVIDIA-0" ]]; then
-    notify-send "Using NVIDIA GPU"
-    # Seems there's a performance issue with using __NV_PRIME_RENDER_OFFLOAD=1 in NVIDIA mode
+    # Seems there's a performance issue with using
+    # __NV_PRIME_RENDER_OFFLOAD=1 in NVIDIA mode
     __GLX_VENDOR_LIBRARY_NAME=nvidia  __VK_LAYER_NV_optimus=NVIDIA_only "$@"
     exit
   fi
 
-  if [ ! /sys/class/power_supply/BAT* ]; then
-    notify-send "WARNING: Battery not detected, defaulting to iGPU"
-    _default=1
-  fi
+  [ ! /sys/class/power_supply/BAT* ] && notify-send \
+  "WARNING: Battery not detected, defaulting to iGPU" && _default=1
 
   # Use iGPU in Vulkan games (DXVK)
   if [[ ! $BAT_STATUS =~ (Full|Charging|Unknown) ]]; then
@@ -47,12 +45,10 @@ if [ -e /dev/dri/card1 ]; then
         _VK_ICD+="$_f "
       fi
     done
-    if [ ! $_default ]; then
-      notify-send "Using iGPU"
-    fi
-    VK_ICD_FILENAMES="${_VK_ICD// /:}" $_RADV "$@"
+    VK_ICD_FILENAMES="${_VK_ICD// /:}" "$@"
     exit
   fi
 else
-  notify-send "WARNING: Only 1 (active) GPU detected, continuing anyways." && "$@"
+  notify-send "WARNING: Only 1 (active) GPU detected, continuing anyways." && \
+  "$@"
 fi
